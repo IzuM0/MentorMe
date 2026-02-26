@@ -1,0 +1,189 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { supabase } from "../../lib/supabase";
+import { fetchMe, type AuthUser } from "../../lib/api";
+
+export type { AuthUser } from "../../lib/api";
+export type AuthRole = "mentee" | "mentor" | "admin";
+
+interface AuthState {
+  user: AuthUser | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+}
+
+interface AuthContextValue extends AuthState {
+  /** Sign in with email and password via Supabase, then sync user from backend. */
+  loginWithPassword: (email: string, password: string) => Promise<void>;
+  /** Sign up with email, password, and options. Returns true if session was created (user is logged in), false if email confirmation is required. */
+  signUp: (email: string, password: string, options: { name: string; role: "mentee" | "mentor" }) => Promise<{ sessionCreated: boolean }>;
+  /** Sign out from Supabase and clear local user. */
+  logout: () => Promise<void>;
+  /** Set user from backend (used after session restore). */
+  setUserFromToken: (accessToken: string) => Promise<void>;
+  /** Re-fetch current user from backend (e.g. after updating profile/role). */
+  refreshUser: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function getStoredUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem("mentorme-user");
+    if (!raw) return null;
+    const data = JSON.parse(raw) as AuthUser;
+    if (!data?.id || !data?.email || !data?.role) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function storeUser(user: AuthUser | null) {
+  try {
+    if (user) {
+      sessionStorage.setItem("mentorme-user", JSON.stringify(user));
+    } else {
+      sessionStorage.removeItem("mentorme-user");
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AuthUser | null>(getStoredUser);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const setUserFromToken = useCallback(async (accessToken: string) => {
+    const me = await fetchMe(accessToken);
+    setUser(me);
+    storeUser(me);
+  }, []);
+
+  const loginWithPassword = useCallback(
+    async (email: string, password: string) => {
+      if (!supabase) throw new Error("Supabase not configured");
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      if (!data.session?.access_token) throw new Error("No session returned");
+      await setUserFromToken(data.session.access_token);
+    },
+    [setUserFromToken]
+  );
+
+  const signUp = useCallback(
+    async (
+      email: string,
+      password: string,
+      options: { name: string; role: "mentee" | "mentor" }
+    ): Promise<{ sessionCreated: boolean }> => {
+      if (!supabase) throw new Error("Supabase not configured");
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: options.name,
+            role: options.role,
+          },
+        },
+      });
+      if (error) throw error;
+      if (data.session?.access_token) {
+        await setUserFromToken(data.session.access_token);
+        return { sessionCreated: true };
+      }
+      return { sessionCreated: false };
+    },
+    [setUserFromToken]
+  );
+
+  const logout = useCallback(async () => {
+    if (supabase) await supabase.auth.signOut();
+    setUser(null);
+    storeUser(null);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      await setUserFromToken(data.session.access_token);
+    }
+  }, [setUserFromToken]);
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsLoading(false);
+      return;
+    }
+    const init = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.access_token) {
+          await setUserFromToken(data.session.access_token);
+        } else {
+          setUser(null);
+          storeUser(null);
+        }
+      } catch {
+        setUser(null);
+        storeUser(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    init();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.access_token) {
+        try {
+          await setUserFromToken(session.access_token);
+        } catch {
+          setUser(null);
+          storeUser(null);
+        }
+      }
+      if (event === "SIGNED_OUT") {
+        setUser(null);
+        storeUser(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [setUserFromToken]);
+
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      isAuthenticated: !!user,
+      isLoading,
+      loginWithPassword,
+      signUp,
+      logout,
+      setUserFromToken,
+      refreshUser,
+    }),
+    [user, isLoading, loginWithPassword, signUp, logout, setUserFromToken, refreshUser]
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return ctx;
+}
