@@ -13,6 +13,8 @@ import { fetchMe, type AuthUser } from "../../lib/api";
 export type { AuthUser } from "../../lib/api";
 export type AuthRole = "mentee" | "mentor" | "admin";
 
+const DEMO_AUTH_ENABLED = import.meta.env.VITE_DEMO_AUTH === "true";
+
 interface AuthState {
   user: AuthUser | null;
   isAuthenticated: boolean;
@@ -71,13 +73,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithPassword = useCallback(
     async (email: string, password: string) => {
+      if (DEMO_AUTH_ENABLED && !supabase) {
+        const demoUser: AuthUser = {
+          id: `demo-${email || "user"}`,
+          name: "Demo User",
+          email: email || "demo@example.com",
+          role: "mentee",
+          avatarUrl: null,
+          bio: "Demo account (no real data is saved).",
+          gender: null,
+          skills: [],
+          goals: [],
+        };
+        setUser(demoUser);
+        storeUser(demoUser);
+        return;
+      }
       if (!supabase) throw new Error("Supabase not configured");
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       if (!data.session?.access_token) throw new Error("No session returned");
       await setUserFromToken(data.session.access_token);
     },
-    [setUserFromToken]
+    [setUserFromToken, setUser]
   );
 
   const signUp = useCallback(
@@ -86,6 +104,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string,
       options: { name: string; role: "mentee" | "mentor" }
     ): Promise<{ sessionCreated: boolean }> => {
+      if (DEMO_AUTH_ENABLED && !supabase) {
+        const demoUser: AuthUser = {
+          id: `demo-${options.role}`,
+          name: options.name || "Demo User",
+          email,
+          role: options.role,
+          avatarUrl: null,
+          bio: "Demo account (no real data is saved).",
+          gender: null,
+          skills: [],
+          goals: [],
+        };
+        setUser(demoUser);
+        storeUser(demoUser);
+        return { sessionCreated: true };
+      }
       if (!supabase) throw new Error("Supabase not configured");
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -104,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return { sessionCreated: false };
     },
-    [setUserFromToken]
+    [setUserFromToken, setUser]
   );
 
   const logout = useCallback(async () => {

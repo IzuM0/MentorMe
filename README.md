@@ -192,4 +192,17 @@ All relevant types are defined in **`src/lib/api.ts`**.
 | Rate session | `POST /api/sessions/:id/ratings` with rating, comment, tags. |
 | Update profile / account type | `PATCH /api/profile` (including `role`). |
 
+## 7. How to get login working locally
+
+1. **Quick demo login (no Supabase, no backend)**:
+   - Use the provided `.env` (or copy `.env.example` to `.env`) with `VITE_DEMO_AUTH=true`.
+   - Do **not** fill `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` yet.
+   - Run `npm run dev` from the frontend root.
+   - Go to `/login` and sign in with **any** email/password; you'll be logged in as a demo mentee user (data is not persisted).
+   - You can also “sign up” on `/register`; in demo mode this just creates a local demo user with the selected role.
+2. **Configure real frontend auth**: when ready to connect Supabase, set `VITE_API_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` in `.env` using your backend URL and Supabase project values (Settings → API in the Supabase dashboard), and set `VITE_DEMO_AUTH=false`.
+3. **Configure and run the minimal backend**: in the `backend` folder, copy `.env.example` to `.env`, set `SUPABASE_JWT_SECRET` from Supabase (Settings → API → JWT secret), then run `npm install` and `npm start` to expose `GET /api/auth/me` on `http://localhost:4000`.
+4. **Run the frontend with real auth**: from the frontend root, run `npm run dev` and open the app in your browser.
+5. **Test login**: register a user (if needed), then log in at `/login`; you should be redirected to the correct dashboard for your role and stay logged in on page refresh.
+
 This README is the single place to understand **what the system is**, **what the frontend does**, and **what the backend must implement** for the app to work end-to-end.
